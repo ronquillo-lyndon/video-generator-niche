@@ -1,0 +1,9 @@
+import {buildScenes, type Project} from './types';
+const questions = [
+  {id:'mars', question:'Which planet is known as the Red Planet?', options:['Venus','Mars','Jupiter','Mercury'], correctAnswerIndex:1, explanation:'Mars looks red because iron minerals on its surface have oxidized.', category:'Space', difficulty:'easy' as const},
+  {id:'ocean', question:'What is the largest ocean on Earth?', options:['Atlantic','Indian','Pacific','Arctic'], correctAnswerIndex:2, explanation:'The Pacific covers more than 165 million square kilometres.', category:'Geography', difficulty:'easy' as const},
+  {id:'bee', question:'How many legs does a bee have?', options:['Four','Six','Eight','Ten'], correctAnswerIndex:1, explanation:'Bees are insects, and insects have six legs.', category:'Animals', difficulty:'easy' as const},
+  {id:'heart', question:'Which organ pumps blood around your body?', options:['Lungs','Brain','Heart','Liver'], correctAnswerIndex:2, explanation:'Your heart pumps oxygen-rich blood through your circulatory system.', category:'Human Body', difficulty:'easy' as const},
+  {id:'book', question:'Who wrote Romeo and Juliet?', options:['Charles Dickens','William Shakespeare','Jane Austen','Mark Twain'], correctAnswerIndex:1, explanation:'Shakespeare wrote the tragedy around 1595.', category:'History', difficulty:'easy' as const},
+];
+export const demoProject: Project = {id:'demo-quiz', title:'Are You Smarter Than a 5th Grader?', category:'General Knowledge', difficulty:'mixed', timer:5, hook:'Think you can get all 5?', cta:'How many did you get right? Comment your score ↓', questions, theme:{name:'Game show', primary:'#ffd84d', secondary:'#ee5bff', background:'#0b1027', card:'#1b2758', accent:'#60e8ff'}, scenes:buildScenes(questions, 5), updatedAt:new Date().toISOString()};
