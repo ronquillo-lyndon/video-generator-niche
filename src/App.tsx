@@ -1,10 +1,10 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
-import {buildScenes, recalculateSceneTimings, duration, themes, type Project, type QuizQuestion, type RenderJob, type SceneType} from './types';
+import {buildScenes, recalculateSceneTimings, duration, themes, type Project, type QuizQuestion, type RenderJob, type RevealMode, type SceneType} from './types';
 import {demoProject} from './seed';
 
 const API = '/api';
 const nav = ['Dashboard', 'Create quiz', 'Editor', 'Templates', 'My videos', 'Publishing', 'Settings'];
-const sceneTitle: Record<SceneType, string> = {hook:'HOOK', question:'QUESTION', reveal:'REVEAL', explanation:'DID YOU KNOW?', score:'YOUR SCORE', cta:'CALL TO ACTION'};
+const sceneTitle: Record<SceneType, string> = {hook:'HOOK', question:'QUESTION', answersIntro:'ANSWERS INTRO', reveal:'REVEAL', explanation:'DID YOU KNOW?', score:'YOUR SCORE', cta:'CALL TO ACTION'};
 const initialJob: RenderJob = {jobId:'', status:'idle', progress:0, currentStep:''};
 const letters = ['A','B','C','D'];
 
@@ -69,6 +69,10 @@ export default function App() {
 
   function update(mutator: (old: Project) => Project) { setProject(old => mutator(old)); }
 
+  function setRevealMode(revealMode: RevealMode) {
+    update(old => ({...old, revealMode, scenes:buildScenes(old.questions, old.timer, true, revealMode)}));
+  }
+
   function selectScene(sceneId: string) {
     const s = project.scenes.find(x => x.id === sceneId);
     if (!s) return;
@@ -93,7 +97,7 @@ export default function App() {
       const res = await fetch(`${API}/quiz/generate`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(input)});
       const result = await res.json() as {questions: QuizQuestion[]; mode: string};
       const qs = result.questions;
-      const newScenes = buildScenes(qs, input.timer);
+      const newScenes = buildScenes(qs, input.timer, true, project.revealMode || 'after-each-question');
       update(old => ({...old, title: input.topic || old.title, category:input.category, timer:input.timer, questions:qs, scenes:newScenes, updatedAt:new Date().toISOString()}));
       setPage('Editor');
       const firstQScene = newScenes.find(s => s.type === 'question') || newScenes[0];
@@ -101,7 +105,7 @@ export default function App() {
       setTime(firstQScene.startTime);
       setNotice(`${qs.length} questions ready · ${result.mode}`);
     } catch {
-      setNotice('Could not reach the local API. Start npm run dev and try again.');
+      setNotice('Could not reach the local API. Start npm run dev and try again.'); //
     }
   }
 
@@ -120,7 +124,7 @@ export default function App() {
 
   function editQuestion(questionId: string, key: keyof QuizQuestion, value: any) {
     const questions = project.questions.map(q => q.id === questionId ? {...q, [key]:value} : q);
-    update(old => ({...old, questions, scenes:buildScenes(questions, old.timer)}));
+    update(old => ({...old, questions, scenes:buildScenes(questions, old.timer, true, old.revealMode || 'after-each-question')}));
   }
 
   function addQuestion() {
@@ -135,7 +139,7 @@ export default function App() {
       difficulty: 'easy'
     };
     const questions = [...project.questions, newQ];
-    const scenes = buildScenes(questions, project.timer);
+    const scenes = buildScenes(questions, project.timer, true, project.revealMode || 'after-each-question');
     update(p => ({...p, questions, scenes}));
     const targetScene = scenes.find(s => s.type === 'question' && s.questionId === newId);
     if (targetScene) {
@@ -151,7 +155,7 @@ export default function App() {
       return;
     }
     const questions = project.questions.filter(q => q.id !== id);
-    const scenes = buildScenes(questions, project.timer);
+    const scenes = buildScenes(questions, project.timer, true, project.revealMode || 'after-each-question');
     update(p => ({...p, questions, scenes}));
     setSelectedSceneId(scenes[1]?.id || scenes[0].id);
     setTime(scenes[1]?.startTime || 0);
@@ -164,12 +168,19 @@ export default function App() {
     update(p => ({...p, scenes}));
   }
 
+  function applyDurationToAll(type: SceneType, dur: number) {
+    update(old => ({
+      ...old,
+      scenes:recalculateSceneTimings(old.scenes.map(s => s.type === type ? {...s, duration:dur} : s))
+    }));
+  }
+
   return <div className="app-shell">
     <aside className="sidebar"><div className="brand"><span className="brand-mark">✦</span><span>quizframe</span></div><p className="workspace">WORKSPACE</p>{nav.map(item => <button key={item} className={`nav-item ${page===item?'active':''}`} onClick={()=>setPage(item)}><span>{icon(item)}</span>{item}</button>)}<div className="sidebar-bottom"><div className="upgrade"><b>✦ Creator plan</b><small>Unlimited local projects</small><button>Manage plan</button></div><div className="profile"><div className="avatar">AM</div><span><b>Alex Morgan</b><small>Creator workspace</small></span><span>⌄</span></div></div></aside>
     <main>
       <header><div><span className="crumb">PROJECTS / </span><b>{project.title}</b><span className="saved">● Saved locally</span></div><div className="header-actions"><button className="ghost" onClick={()=>setPage('Publishing')}>↗ Publish</button><button className="primary" onClick={render}>✦ Render video</button></div></header>
       {notice && <div className="notice">{notice}<button onClick={()=>setNotice('')}>×</button></div>}
-      {page === 'Editor' && <Editor project={project} total={total} activeScene={activeScene} activeQuestion={activeQuestion} selectedSceneId={selectedSceneId} selectScene={selectScene} selectQuestion={selectQuestion} addQuestion={addQuestion} deleteQuestion={deleteQuestion} playing={playing} setPlaying={setPlaying} time={time} setTime={setTime} sound={sound} setSound={setSound} showGuides={showGuides} setShowGuides={setShowGuides} update={update} editQuestion={editQuestion} updateSceneDuration={updateSceneDuration} job={job} render={render}/>} 
+      {page === 'Editor' && <Editor project={project} total={total} activeScene={activeScene} activeQuestion={activeQuestion} selectedSceneId={selectedSceneId} selectScene={selectScene} selectQuestion={selectQuestion} addQuestion={addQuestion} deleteQuestion={deleteQuestion} playing={playing} setPlaying={setPlaying} time={time} setTime={setTime} sound={sound} setSound={setSound} showGuides={showGuides} setShowGuides={setShowGuides} update={update} editQuestion={editQuestion} updateSceneDuration={updateSceneDuration} applyDurationToAll={applyDurationToAll} setRevealMode={setRevealMode} job={job} render={render}/>} 
       {page === 'Dashboard' && <Dashboard project={project} total={total} onEdit={()=>setPage('Editor')} onCreate={()=>setPage('Create quiz')}/>} 
       {page === 'Create quiz' && <CreateQuiz onGenerate={generate}/>} 
       {page === 'Templates' && <Templates project={project} update={update}/>} 
@@ -193,6 +204,13 @@ function Editor(p: any) {
         <button className={`editor-tab ${editorTab==='scenes'?'active':''}`} onClick={()=>setEditorTab('scenes')}>
           ⏱ Scenes <i>{p.project.scenes.length}</i>
         </button>
+      </div>
+      <div className="reveal-mode-control">
+        <span>REVEAL ANSWERS</span>
+        <div>
+          <button className={(p.project.revealMode || 'after-each-question') === 'after-each-question' ? 'active' : ''} onClick={() => p.setRevealMode('after-each-question')}>After each</button>
+          <button className={p.project.revealMode === 'at-end' ? 'active' : ''} onClick={() => p.setRevealMode('at-end')}>At the end</button>
+        </div>
       </div>
 
       {editorTab === 'questions' ? (
@@ -292,11 +310,14 @@ function Editor(p: any) {
       {p.activeScene.type === 'question' && q && (
         <QuestionProperties q={q} edit={p.editQuestion} project={p.project} update={p.update}/>
       )}
+      {p.activeScene.type === 'answersIntro' && (
+        <AnswersIntroProperties scene={p.activeScene} project={p.project} update={p.update} updateSceneDuration={p.updateSceneDuration}/>
+      )}
       {p.activeScene.type === 'reveal' && q && (
-        <RevealProperties scene={p.activeScene} q={q} project={p.project} updateSceneDuration={p.updateSceneDuration} selectQuestion={p.selectQuestion}/>
+        <RevealProperties scene={p.activeScene} q={q} project={p.project} updateSceneDuration={p.updateSceneDuration} applyDurationToAll={p.applyDurationToAll} selectQuestion={p.selectQuestion}/>
       )}
       {p.activeScene.type === 'explanation' && q && (
-        <ExplanationProperties scene={p.activeScene} q={q} edit={p.editQuestion} updateSceneDuration={p.updateSceneDuration}/>
+        <ExplanationProperties scene={p.activeScene} q={q} edit={p.editQuestion} updateSceneDuration={p.updateSceneDuration} applyDurationToAll={p.applyDurationToAll}/>
       )}
       {p.activeScene.type === 'hook' && (
         <HookProperties scene={p.activeScene} project={p.project} update={p.update} updateSceneDuration={p.updateSceneDuration}/>
@@ -329,6 +350,13 @@ function PhonePreview({project, scene, question, time, guides}:{project:Project;
             <span>QUIZ TIME</span>
             <h1>{project.hook}</h1>
             <b>Ready? Let’s go.</b>
+          </div>
+        )}
+        {scene.type === 'answersIntro' && (
+          <div className="hook-screen answers-intro-screen">
+            <span>QUIZ COMPLETE</span>
+            <h1>{project.revealIntroText || 'Let’s see the answers!'}</h1>
+            <b>{project.questions.length} answers</b>
           </div>
         )}
         {(questionScene || reveal) && question && (
@@ -414,12 +442,12 @@ function QuestionProperties({q, edit, project, update}:{q:QuizQuestion;edit:(id:
         <div className="stepper">
           <button onClick={() => {
             const nextTimer = Math.max(2, project.timer - 1);
-            update((old: Project) => ({...old, timer: nextTimer, scenes: buildScenes(old.questions, nextTimer)}));
+            update((old: Project) => ({...old, timer: nextTimer, scenes: buildScenes(old.questions, nextTimer, true, old.revealMode || 'after-each-question')}));
           }}>−</button>
           <b>{project.timer}s</b>
           <button onClick={() => {
             const nextTimer = Math.min(15, project.timer + 1);
-            update((old: Project) => ({...old, timer: nextTimer, scenes: buildScenes(old.questions, nextTimer)}));
+            update((old: Project) => ({...old, timer: nextTimer, scenes: buildScenes(old.questions, nextTimer, true, old.revealMode || 'after-each-question')}));
           }}>＋</button>
         </div>
       </label>
@@ -427,7 +455,7 @@ function QuestionProperties({q, edit, project, update}:{q:QuizQuestion;edit:(id:
   );
 }
 
-function RevealProperties({scene, q, project, updateSceneDuration, selectQuestion}:{scene:any;q:QuizQuestion;project:Project;updateSceneDuration:(id:string,d:number)=>void;selectQuestion:(id:string)=>void}) {
+function RevealProperties({scene, q, project, updateSceneDuration, applyDurationToAll, selectQuestion}:{scene:any;q:QuizQuestion;project:Project;updateSceneDuration:(id:string,d:number)=>void;applyDurationToAll:(type:SceneType,d:number)=>void;selectQuestion:(id:string)=>void}) {
   const qIndex = project.questions.findIndex(x => x.id === q.id);
   return (
     <div className="property-content">
@@ -445,12 +473,21 @@ function RevealProperties({scene, q, project, updateSceneDuration, selectQuestio
         REVEAL DURATION: {scene.duration}s
         <input type="range" min="1" max="5" step="0.5" value={scene.duration} onChange={e => updateSceneDuration(scene.id, +e.target.value)}/>
       </label>
+      <button className="jump-btn" onClick={() => applyDurationToAll('reveal', scene.duration)}>Apply to all reveal scenes</button>
       <button className="jump-btn" onClick={() => selectQuestion(q.id)}>Edit Question Text & Options →</button>
     </div>
   );
 }
 
-function ExplanationProperties({scene, q, edit, updateSceneDuration}:{scene:any;q:QuizQuestion;edit:(id:string,key:keyof QuizQuestion,val:any)=>void;updateSceneDuration:(id:string,d:number)=>void}) {
+function AnswersIntroProperties({scene, project, update, updateSceneDuration}:{scene:any;project:Project;update:any;updateSceneDuration:(id:string,d:number)=>void}) {
+  return <div className="property-content">
+    <span className="property-badge hook">ANSWERS INTRO</span>
+    <label>INTRO TEXT<textarea value={project.revealIntroText || 'Let’s see the answers!'} onChange={e => update((p:Project) => ({...p, revealIntroText:e.target.value}))}/></label>
+    <label>DURATION: {scene.duration}s<input type="range" min="1" max="6" step="0.5" value={scene.duration} onChange={e => updateSceneDuration(scene.id, +e.target.value)}/></label>
+  </div>;
+}
+
+function ExplanationProperties({scene, q, edit, updateSceneDuration, applyDurationToAll}:{scene:any;q:QuizQuestion;edit:(id:string,key:keyof QuizQuestion,val:any)=>void;updateSceneDuration:(id:string,d:number)=>void;applyDurationToAll:(type:SceneType,d:number)=>void}) {
   return (
     <div className="property-content">
       <span className="property-badge explanation">EXPLANATION SCENE</span>
@@ -462,6 +499,7 @@ function ExplanationProperties({scene, q, edit, updateSceneDuration}:{scene:any;
         EXPLANATION DURATION: {scene.duration}s
         <input type="range" min="1" max="8" step="0.5" value={scene.duration} onChange={e => updateSceneDuration(scene.id, +e.target.value)}/>
       </label>
+      <button className="jump-btn" onClick={() => applyDurationToAll('explanation', scene.duration)}>Apply to all explanation scenes</button>
     </div>
   );
 }

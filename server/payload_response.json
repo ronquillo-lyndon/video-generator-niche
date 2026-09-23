@@ -1,0 +1,61 @@
+{
+  "_comment": "Reference shape for POST /api/quiz/generate — what Gemini returns and what the server sends back to the frontend.",
+
+  "gemini_raw_output_text": "[{\"question\":\"Which gas do plants absorb during photosynthesis?\",\"options\":[\"Oxygen\",\"Carbon dioxide\",\"Nitrogen\",\"Hydrogen\"],\"correctAnswerIndex\":1,\"explanation\":\"Plants convert CO₂ and sunlight into glucose and oxygen during photosynthesis.\",\"category\":\"Science\",\"difficulty\":\"easy\"}, ...]",
+
+  "server_to_frontend": {
+    "questions": [
+      {
+        "id": "a1b2c3d",
+        "question": "Which gas do plants absorb during photosynthesis?",
+        "options": ["Oxygen", "Carbon dioxide", "Nitrogen", "Hydrogen"],
+        "correctAnswerIndex": 1,
+        "explanation": "Plants convert CO₂ and sunlight into glucose and oxygen during photosynthesis.",
+        "category": "Science",
+        "difficulty": "easy"
+      },
+      {
+        "id": "e4f5g6h",
+        "question": "What is the powerhouse of the cell?",
+        "options": ["Nucleus", "Ribosome", "Mitochondria", "Golgi apparatus"],
+        "correctAnswerIndex": 2,
+        "explanation": "Mitochondria generate most of the cell's ATP through cellular respiration.",
+        "category": "Science",
+        "difficulty": "easy"
+      },
+      {
+        "id": "i7j8k9l",
+        "question": "At what temperature does water boil at sea level?",
+        "options": ["90°C", "95°C", "100°C", "110°C"],
+        "correctAnswerIndex": 2,
+        "explanation": "Water boils at 100°C (212°F) at standard atmospheric pressure (1 atm).",
+        "category": "Science",
+        "difficulty": "easy"
+      },
+      {
+        "id": "m0n1o2p",
+        "question": "How many bones are in the adult human body?",
+        "options": ["196", "206", "216", "226"],
+        "correctAnswerIndex": 1,
+        "explanation": "Adults have 206 bones; babies are born with around 270 that fuse over time.",
+        "category": "Science",
+        "difficulty": "medium"
+      },
+      {
+        "id": "q3r4s5t",
+        "question": "Which planet has the most moons in our solar system?",
+        "options": ["Jupiter", "Saturn", "Uranus", "Neptune"],
+        "correctAnswerIndex": 1,
+        "explanation": "Saturn currently holds the record with over 140 confirmed moons as of 2024.",
+        "category": "Science",
+        "difficulty": "medium"
+      }
+    ],
+    "mode": "gemini-3.8-flash"
+  },
+
+  "error_response": {
+    "error": "AI generation failed. Please check your AI_API_KEY."
+  }
+}
+

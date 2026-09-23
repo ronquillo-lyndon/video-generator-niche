@@ -1,0 +1,22 @@
+{
+  "_comment": "Reference shape for POST /api/quiz/generate — what the frontend sends to the server, and what the server sends to the Gemini API.",
+
+  "frontend_to_server": {
+    "topic": "Can you get 5/5 on these science questions?",
+    "category": "Science",
+    "count": 5,
+    "timer": 5
+  },
+
+  "server_to_gemini": {
+    "model": "gemini-3.8-flash",
+    "system_instruction": "You are a professional quiz writer who creates engaging, accurate multiple-choice questions for short-form social media videos. Always respond with valid JSON only — no markdown, no explanation.",
+    "input": "Generate 5 quiz questions about the topic: 'Can you get 5/5 on these science questions?' in the category 'Science'.\n\nReturn a JSON array of exactly 5 objects. Each object must have:\n- \"question\": string (max 110 chars, punchy and viral)\n- \"options\": array of exactly 4 strings (concise answer choices)\n- \"correctAnswerIndex\": number (0-3, index of the correct option)\n- \"explanation\": string (1 sentence 'Did you know' fun fact, max 120 chars)\n- \"category\": string (exactly \"Science\")\n- \"difficulty\": one of \"easy\", \"medium\", \"hard\"\n\nRespond with ONLY the JSON array. No markdown fences.",
+    "generation_config": {
+      "response_mime_type": "application/json",
+      "temperature": 0.85,
+      "max_output_tokens": 1500
+    }
+  }
+}
+

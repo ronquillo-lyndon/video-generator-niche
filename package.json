@@ -6,12 +6,13 @@
   "scripts": {
     "dev": "concurrently -k \"npm:dev:web\" \"npm:dev:api\"",
     "dev:web": "vite",
-    "dev:api": "tsx watch server/index.ts",
+    "dev:api": "node --env-file .env --import tsx/esm server/index.ts --watch",
     "build": "tsc -b && vite build",
-    "start": "tsx server/index.ts",
+    "start": "node --env-file .env --import tsx/esm server/index.ts",
     "check": "tsc -b --pretty false"
   },
   "dependencies": {
+    "@google/genai": "^2.23.0",
     "@resvg/resvg-js": "^2.6.2",
     "cors": "^2.8.5",
     "express": "^4.21.2",

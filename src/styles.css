@@ -5,6 +5,7 @@
 .editor-tab:hover{background:#272835;color:#e1e2ec}
 .editor-tab.active{background:#352c48;border-color:#6c4fa3;color:#eedcff;box-shadow:0 0 10px #704da833}
 .editor-tab i{font-style:normal;background:#44375b;color:#d5b7ff;font-size:9px;padding:1px 5px;border-radius:10px}
+.reveal-mode-control{padding:10px 12px;border-bottom:1px solid #2a2b34}.reveal-mode-control>span{display:block;margin-bottom:7px;color:#777989;font:9px 'DM Mono';letter-spacing:.6px}.reveal-mode-control>div{display:flex;gap:5px}.reveal-mode-control button{flex:1;padding:7px 5px;background:#20212a;border:1px solid #2d2e3b;border-radius:5px;color:#a4a6b1;font-size:10px}.reveal-mode-control button.active{background:#352c48;border-color:#6c4fa3;color:#eedcff}.answers-intro-screen{background:linear-gradient(145deg,var(--secondary),var(--bg) 65%)}
 .question-list{padding:10px;display:flex;flex-direction:column;gap:8px}
 .question-card{background:#1d1e27;border:1px solid #2e303d;border-radius:8px;padding:10px 12px;text-align:left;display:flex;flex-direction:column;gap:7px;transition:.15s;cursor:pointer;position:relative}
 .question-card:hover{background:#242633;border-color:#484a5e}
@@ -33,4 +34,3 @@
 .correct-answer-preview{background:#1a2f26;border:1px solid #2e6b50;border-radius:7px;padding:10px 12px;margin:10px 0;display:flex;align-items:center;gap:8px}
 .correct-answer-preview b{color:#64f3a7;font-size:11px}
 .correct-answer-preview span{color:#e6f9f0;font-size:11px}
-

@@ -4,6 +4,7 @@ import {existsSync, mkdirSync, writeFileSync, readFileSync, statSync, rmSync} fr
 import {join, resolve, basename} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {spawn, spawnSync} from 'node:child_process';
+import {GoogleGenAI} from '@google/genai';
 
 const app = express();
 const port = Number(process.env.PORT || 3001);
@@ -27,8 +28,73 @@ const banks: Record<string, Array<[string,string[],number,string]>> = {
 };
 function questionsFor(topic:string, category:string, count:number) { const bank = banks[category.toLowerCase()] || banks[topic.toLowerCase()] || banks.general; return Array.from({length:Math.min(Math.max(count,3),15)},(_, i) => { const data=bank[i%bank.length]; return {id:randomUUID().slice(0,8),question:data[0],options:data[1],correctAnswerIndex:data[2],explanation:data[3],category,difficulty:'mixed'}; }); }
 
-app.get('/api/health', (_req,res) => res.json({ok:true,renderer:ffmpegAvailable() ? 'ffmpeg' : 'unavailable', mode:'local-demo'}));
-app.post('/api/quiz/generate', (req,res) => { const {topic='',category='General',count=5,timer=5}=req.body || {}; if(typeof topic !== 'string' || topic.length > 160 || !Number.isInteger(count) || count < 3 || count > 15 || !Number.isFinite(timer)) return res.status(400).json({error:'Invalid quiz configuration'}); res.json({questions:questionsFor(topic,category,count),mode:'Demo quiz generator'}); });
+
+const aiClient = process.env.AI_API_KEY
+  ? new GoogleGenAI({apiKey: process.env.AI_API_KEY})
+  : null;
+
+app.get('/api/health', (_req, res) => res.json({
+  ok: true,
+  renderer: ffmpegAvailable() ? 'ffmpeg' : 'unavailable',
+  mode: aiClient ? 'gemini' : 'local-demo',
+}));
+
+app.post('/api/quiz/generate', async (req, res) => {
+  const {topic = '', category = 'General', count = 5, timer = 5} = req.body || {};
+  if (
+    typeof topic !== 'string' || topic.length > 160 ||
+    !Number.isInteger(count) || count < 3 || count > 15 ||
+    !Number.isFinite(timer)
+  ) return res.status(400).json({error: 'Invalid quiz configuration'});
+
+  // ── Live Gemini generation ──────────────────────────────────────────────
+  if (aiClient) {
+    try {
+      const prompt = `Generate ${count} quiz questions about the topic: '${topic}' in the category '${category}'.
+
+Return a JSON array of exactly ${count} objects. Each object must have:
+- "question": string (max 110 chars, punchy and viral)
+- "options": array of exactly 4 strings (concise answer choices)
+- "correctAnswerIndex": number (0-3, index of the correct option in the options array)
+- "explanation": string (1 sentence "Did you know" fun fact, max 120 chars)
+- "category": string (exactly "${category}")
+- "difficulty": one of "easy", "medium", "hard"
+
+Respond with ONLY the raw JSON array. No markdown, no code fences, no explanation.`;
+
+      const interaction = await aiClient.interactions.create({
+        model: 'gemini-3.8-flash',
+        system_instruction: 'You are a professional quiz writer who creates engaging, accurate multiple-choice questions for short-form social media videos. Always respond with valid JSON only — no markdown fences, no explanation.',
+        input: prompt,
+        store: false,
+      });
+
+      // Strip potential markdown code fences from the response
+      const raw = (interaction.output_text ?? '').replace(/^```(?:json)?\n?/,'').replace(/\n?```$/,'').trim();
+      const parsed: any[] = JSON.parse(raw);
+      if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('Invalid AI response shape');
+
+      const questions = parsed.slice(0, count).map((q: any) => ({
+        id: randomUUID().slice(0, 8),
+        question: String(q.question || '').slice(0, 160),
+        options: Array.isArray(q.options) ? q.options.slice(0, 4).map(String) : ['A', 'B', 'C', 'D'],
+        correctAnswerIndex: Number.isInteger(q.correctAnswerIndex) ? q.correctAnswerIndex : 0,
+        explanation: String(q.explanation || '').slice(0, 200),
+        category: String(q.category || category),
+        difficulty: ['easy', 'medium', 'hard'].includes(q.difficulty) ? q.difficulty : 'mixed',
+      }));
+
+      return res.json({questions, mode: 'gemini-3.8-flash'});
+    } catch (err) {
+      console.error('[quiz/generate] Gemini error:', err);
+      return res.status(500).json({error: 'AI generation failed. Please check your AI_API_KEY.'});
+    }
+  }
+
+  // ── Mock fallback ───────────────────────────────────────────────────────
+  res.json({questions: questionsFor(topic, category, count), mode: 'Demo quiz generator'});
+});
+
 app.put('/api/projects/:id', (req,res) => { const id=safeId(req.params.id); if(!id || !req.body || typeof req.body !== 'object') return res.status(400).json({error:'Invalid project'}); const raw=JSON.stringify({...req.body,id,updatedAt:new Date().toISOString()}); if(raw.length > 500_000) return res.status(413).json({error:'Project too large'}); writeFileSync(projectFile(id),raw,'utf8'); res.json({id,version:new Date().toISOString()}); });
 app.get('/api/projects/:id', (req,res) => { const id=safeId(req.params.id); if(!id || !existsSync(projectFile(id))) return res.status(404).json({error:'Project not found'}); res.type('json').send(readFileSync(projectFile(id),'utf8')); });
 app.post('/api/render', (req,res) => { const projectId=safeId(req.body?.projectId); if(!projectId || !existsSync(projectFile(projectId))) return res.status(400).json({error:'Save a valid project before rendering'}); const job:Job={jobId:randomUUID(),projectId,status:'queued',progress:0,currentStep:'Queued'}; jobs.set(job.jobId,job); runRender(job); res.status(202).json(job); });
@@ -127,6 +193,22 @@ function generateSceneSvg(scene: any, project: any, frameContext?: { remaining?:
           ${lines.map((l, i) => `<text x="0" y="${i * 90}" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-weight="800" font-size="74">${escapeXml(l)}</text>`).join('')}
         </g>
         <text x="540" y="1250" text-anchor="middle" fill="${theme.accent}" font-family="Arial, sans-serif" font-weight="bold" font-size="38">Ready? Let’s go.</text>
+      </svg>
+    `;
+  }
+
+  if (scene.type === 'answersIntro') {
+    const lines = wrap(project.revealIntroText || 'Let’s see the answers!', 22);
+    return `
+      <svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920">
+        ${defs}
+        <rect width="1080" height="1920" fill="url(#hookGrad)"/>
+        <rect width="1080" height="1920" fill="url(#dotGrid)"/>
+        <text x="80" y="110" fill="${theme.primary}" font-family="Arial, sans-serif" font-weight="bold" font-size="34">quizframe</text>
+        <text x="540" y="680" text-anchor="middle" fill="${theme.primary}" font-family="Arial, sans-serif" font-weight="bold" font-size="36" letter-spacing="4">ANSWERS REVEAL</text>
+        <g transform="translate(540, 820)">
+          ${lines.map((line, i) => `<text x="0" y="${i * 90}" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-weight="800" font-size="74">${escapeXml(line)}</text>`).join('')}
+        </g>
       </svg>
     `;
   }
@@ -348,7 +430,7 @@ async function runRender(job:Job) {
     tempDir=join(renderDir, `tmp-${job.jobId}`);
     mkdirSync(tempDir,{recursive:true});
     
-    const validScenes = project.scenes.filter((scene:any) => ['hook','question','reveal','explanation','score','cta'].includes(scene.type) && Number(scene.duration) > 0);
+    const validScenes = project.scenes.filter((scene:any) => ['hook','question','answersIntro','reveal','explanation','score','cta'].includes(scene.type) && Number(scene.duration) > 0);
     if (!validScenes.length) throw Error('Timeline has no renderable scenes');
 
     for (let index=0; index<validScenes.length; index++) {
@@ -411,4 +493,3 @@ async function runRender(job:Job) {
 }
 
 app.listen(port,()=>console.log(`Quizframe API listening on http://localhost:${port}`));
-
