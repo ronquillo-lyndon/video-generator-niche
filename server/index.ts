@@ -12,6 +12,17 @@ const root = resolve(process.cwd(), 'storage');
 const projectDir = join(root, 'projects');
 const renderDir = join(root, 'renders');
 [root, projectDir, renderDir].forEach(path => mkdirSync(path, {recursive:true}));
+const clockSfxFiles: Record<string, string> = {
+  'clock_sfx1.mp3': join(process.cwd(), 'src', 'assets', 'sfx', 'clock sfxs', 'clock_sfx1.mp3'),
+  'clock_sfx2.mp3': join(process.cwd(), 'src', 'assets', 'sfx', 'clock sfxs', 'clock_sfx2.mp3'),
+  'clock_sfx3.mp3': join(process.cwd(), 'src', 'assets', 'sfx', 'clock sfxs', 'clock_sfx3.mp3'),
+};
+const correctSfxFiles: Record<string, string> = {
+  'correct_sfx1.mp3': join(process.cwd(), 'src', 'assets', 'sfx', 'correct sfxs', 'correct_sfx1.mp3'),
+  'correct_sfx2.mp3': join(process.cwd(), 'src', 'assets', 'sfx', 'correct sfxs', 'correct_sfx2.mp3'),
+  'correct_sfx3.mp3': join(process.cwd(), 'src', 'assets', 'sfx', 'correct sfxs', 'correct_sfx3.mp3'),
+  'correct_sfx4.mp3': join(process.cwd(), 'src', 'assets', 'sfx', 'correct sfxs', 'correct_sfx4.mp3'),
+};
 app.use(cors({origin: ['http://localhost:5173'], methods:['GET','POST','PUT']}));
 app.use(express.json({limit:'500kb'}));
 
@@ -416,6 +427,24 @@ function runFfmpeg(args:string[]) {
   });
 }
 
+function soundInputArgs(scene: any, project: any): string[] {
+  const soundFile = scene.type === 'question'
+    ? clockSfxFiles[project.clockSfx || 'clock_sfx1.mp3']
+    : scene.type === 'reveal'
+      ? correctSfxFiles[project.correctSfx || 'correct_sfx1.mp3']
+      : undefined;
+  if (!soundFile) return ['-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100'];
+  return scene.type === 'question' ? ['-stream_loop', '-1', '-i', soundFile] : ['-i', soundFile];
+}
+
+function soundOutputArgs(scene: any, project: any, sceneDuration: number): string[] {
+  const args = ['-map', '0:v:0', '-map', '1:a:0'];
+  if (scene.type === 'reveal' && correctSfxFiles[project.correctSfx || 'correct_sfx1.mp3']) {
+    args.push('-af', `apad=pad_dur=${sceneDuration}`);
+  }
+  return [...args, '-t', String(sceneDuration), '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-r', '30', '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2'];
+}
+
 async function runRender(job:Job) {
   let tempDir = '';
   try {
@@ -424,6 +453,10 @@ async function runRender(job:Job) {
     const questions=project.questions;
     if(!Array.isArray(questions)||questions.length<2||questions.some((q:any)=>!q.question||!Array.isArray(q.options)||q.options.length<2||q.correctAnswerIndex===undefined)) throw Error('Project content validation failed');
     if(!Array.isArray(project.scenes)||project.scenes.length===0) throw Error('Project timeline is empty');
+    if ((project.clockSfx && !clockSfxFiles[project.clockSfx]) || (project.correctSfx && !correctSfxFiles[project.correctSfx])) throw Error('Invalid sound effect selection');
+    for (const soundFile of [clockSfxFiles[project.clockSfx || 'clock_sfx1.mp3'], correctSfxFiles[project.correctSfx || 'correct_sfx1.mp3']]) {
+      if (!existsSync(soundFile)) throw Error('A selected sound effect file is missing');
+    }
     if(!ffmpegAvailable()) throw Error('FFmpeg is not installed. Install FFmpeg and restart the server to create an MP4.');
     
     advance(job,'preparing',25,'Building high-definition scene compositions');
@@ -458,7 +491,7 @@ async function runRender(job:Job) {
         frameLines.push(`file 'q-${index}-sec-${totalSec - 1}.png'`);
         writeFileSync(frameListFile, frameLines.join('\n'), 'utf8');
 
-        await runFfmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', frameListFile, '-t', String(sceneDuration), '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-r', '30', part]);
+        await runFfmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', frameListFile, ...soundInputArgs(scene, project), ...soundOutputArgs(scene, project, sceneDuration), part]);
       } else {
         // Static high-fidelity scene frame
         const sceneSvg = generateSceneSvg(scene, project);
@@ -466,7 +499,7 @@ async function runRender(job:Job) {
         const framePath = join(tempDir, `scene-frame-${index}.png`);
         writeFileSync(framePath, pngRes.asPng());
 
-        await runFfmpeg(['-y', '-loop', '1', '-i', framePath, '-t', String(sceneDuration), '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-r', '30', part]);
+        await runFfmpeg(['-y', '-loop', '1', '-i', framePath, ...soundInputArgs(scene, project), ...soundOutputArgs(scene, project, sceneDuration), part]);
       }
     }
 

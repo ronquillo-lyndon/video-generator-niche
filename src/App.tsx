@@ -1,6 +1,7 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import {buildScenes, recalculateSceneTimings, duration, themes, type Project, type QuizQuestion, type RenderJob, type RevealMode, type SceneType} from './types';
 import {demoProject} from './seed';
+import {clockSfxOptions, correctSfxOptions} from './sfx';
 
 const API = '/api';
 const nav = ['Dashboard', 'Create quiz', 'Editor', 'Templates', 'My videos', 'Publishing', 'Settings'];
@@ -10,6 +11,29 @@ const letters = ['A','B','C','D'];
 
 function fmt(seconds: number) { return `00:${String(Math.floor(seconds)).padStart(2, '0')}`; }
 function fit(text: string, base: number) { return text.length > 82 ? base * .67 : text.length > 54 ? base * .8 : base; }
+
+function createQuizText(project: Project) {
+  const questions = new Map(project.questions.map(question => [question.id, question]));
+  return [...project.scenes]
+    .map((scene, index) => ({scene, index}))
+    .sort((a, b) => a.scene.startTime - b.scene.startTime || a.index - b.index)
+    .flatMap(({scene}) => {
+      const question = scene.questionId ? questions.get(scene.questionId) : undefined;
+      if (!question) return [];
+      if (scene.type === 'question') {
+        return [`Question: ${question.question}\n${question.options.map((option, index) => `${letters[index] || index + 1}. ${option}`).join('\n')}`];
+      }
+      if (scene.type === 'reveal') {
+        const answer = question.options[question.correctAnswerIndex];
+        return answer ? [`Answer: ${answer}`] : [];
+      }
+      if (scene.type === 'explanation' && question.explanation?.trim()) {
+        return [`Fact: ${question.explanation.trim()}`];
+      }
+      return [];
+    })
+    .join('\n\n');
+}
 
 export default function App() {
   const [project, setProject] = useState<Project>(() => { try { return JSON.parse(localStorage.getItem('quizframe-project') || '') } catch { return demoProject } });
@@ -21,7 +45,10 @@ export default function App() {
   const [showGuides, setShowGuides] = useState(false);
   const [job, setJob] = useState<RenderJob>(initialJob);
   const [notice, setNotice] = useState('');
+  const [quizText, setQuizText] = useState<string | null>(null);
   const timer = useRef<number>();
+  const previewAudio = useRef<HTMLAudioElement | null>(null);
+  const lastPreviewSfx = useRef('');
   const total = duration(project);
 
   const activeScene = useMemo(() => {
@@ -66,6 +93,36 @@ export default function App() {
     }, 900);
     return () => clearInterval(id);
   }, [job.jobId, job.status]);
+
+  useEffect(() => {
+    const audio = previewAudio.current || new Audio();
+    previewAudio.current = audio;
+    if (!playing || !sound) {
+      audio.pause();
+      audio.currentTime = 0;
+      lastPreviewSfx.current = '';
+      return;
+    }
+
+    const scene = activeScene;
+    const options = scene?.type === 'question' ? clockSfxOptions : scene?.type === 'reveal' ? correctSfxOptions : null;
+    if (!scene || !options) {
+      audio.pause();
+      lastPreviewSfx.current = scene?.id || '';
+      return;
+    }
+    const selectedId = scene.type === 'question' ? project.clockSfx : project.correctSfx;
+    const selected = options.find(option => option.id === selectedId) || options[0];
+    const sfxKey = `${scene.id}:${selected.id}`;
+    if (lastPreviewSfx.current === sfxKey) return;
+
+    lastPreviewSfx.current = sfxKey;
+    audio.pause();
+    audio.src = selected.url;
+    audio.loop = scene.type === 'question';
+    audio.currentTime = 0;
+    void audio.play().catch(() => {});
+  }, [playing, sound, activeScene?.id, activeScene?.type, project.clockSfx, project.correctSfx]);
 
   function update(mutator: (old: Project) => Project) { setProject(old => mutator(old)); }
 
@@ -119,6 +176,17 @@ export default function App() {
       setJob(await start.json());
     } catch {
       setNotice('The local renderer is unavailable. Start npm run dev to enable the rendering queue.');
+    }
+  }
+
+  async function copyQuizText() {
+    if (!quizText) return;
+    try {
+      await navigator.clipboard.writeText(quizText);
+      setQuizText(null);
+      setNotice('Quiz text copied to clipboard.');
+    } catch {
+      setNotice('Could not copy automatically. Select the text and copy it manually.');
     }
   }
 
@@ -178,8 +246,9 @@ export default function App() {
   return <div className="app-shell">
     <aside className="sidebar"><div className="brand"><span className="brand-mark">✦</span><span>quizframe</span></div><p className="workspace">WORKSPACE</p>{nav.map(item => <button key={item} className={`nav-item ${page===item?'active':''}`} onClick={()=>setPage(item)}><span>{icon(item)}</span>{item}</button>)}<div className="sidebar-bottom"><div className="upgrade"><b>✦ Creator plan</b><small>Unlimited local projects</small><button>Manage plan</button></div><div className="profile"><div className="avatar">AM</div><span><b>Alex Morgan</b><small>Creator workspace</small></span><span>⌄</span></div></div></aside>
     <main>
-      <header><div><span className="crumb">PROJECTS / </span><b>{project.title}</b><span className="saved">● Saved locally</span></div><div className="header-actions"><button className="ghost" onClick={()=>setPage('Publishing')}>↗ Publish</button><button className="primary" onClick={render}>✦ Render video</button></div></header>
+      <header><div><span className="crumb">PROJECTS / </span><b>{project.title}</b><span className="saved">● Saved locally</span></div><div className="header-actions"><button className="ghost" onClick={()=>setPage('Publishing')}>↗ Publish</button><button className="ghost" onClick={()=>setQuizText(createQuizText(project))}>Generate text</button><button className="primary" onClick={render}>✦ Render video</button></div></header>
       {notice && <div className="notice">{notice}<button onClick={()=>setNotice('')}>×</button></div>}
+      {quizText !== null && <div className="text-overlay" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setQuizText(null); }}><section className="text-modal" role="dialog" aria-modal="true" aria-labelledby="quiz-text-title"><button className="text-close" aria-label="Close" onClick={()=>setQuizText(null)}>×</button><h2 id="quiz-text-title">Quiz text</h2><p>Questions, answer choices, correct answers, and facts in timeline order.</p><textarea aria-label="Generated quiz text" readOnly value={quizText} placeholder="No questions, answers, or facts are available in the timeline."/><div className="text-actions"><button className="ghost" onClick={()=>setQuizText(null)}>Close</button><button className="primary" disabled={!quizText} onClick={copyQuizText}>Copy text</button></div></section></div>}
       {page === 'Editor' && <Editor project={project} total={total} activeScene={activeScene} activeQuestion={activeQuestion} selectedSceneId={selectedSceneId} selectScene={selectScene} selectQuestion={selectQuestion} addQuestion={addQuestion} deleteQuestion={deleteQuestion} playing={playing} setPlaying={setPlaying} time={time} setTime={setTime} sound={sound} setSound={setSound} showGuides={showGuides} setShowGuides={setShowGuides} update={update} editQuestion={editQuestion} updateSceneDuration={updateSceneDuration} applyDurationToAll={applyDurationToAll} setRevealMode={setRevealMode} job={job} render={render}/>} 
       {page === 'Dashboard' && <Dashboard project={project} total={total} onEdit={()=>setPage('Editor')} onCreate={()=>setPage('Create quiz')}/>} 
       {page === 'Create quiz' && <CreateQuiz onGenerate={generate}/>} 
@@ -307,6 +376,19 @@ function Editor(p: any) {
 
     <section className="properties">
       <div className="property-head"><span>PROPERTIES</span><button>•••</button></div>
+      <div className="sfx-card">
+        <b>SOUND EFFECTS</b>
+        <label>QUESTION CLOCK
+          <select aria-label="Question clock sound" value={p.project.clockSfx || clockSfxOptions[0].id} onChange={e => p.update((old: Project) => ({...old, clockSfx:e.target.value}))}>
+            {clockSfxOptions.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
+          </select>
+        </label>
+        <label>CORRECT ANSWER
+          <select aria-label="Correct answer sound" value={p.project.correctSfx || correctSfxOptions[0].id} onChange={e => p.update((old: Project) => ({...old, correctSfx:e.target.value}))}>
+            {correctSfxOptions.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
+          </select>
+        </label>
+      </div>
       {p.activeScene.type === 'question' && q && (
         <QuestionProperties q={q} edit={p.editQuestion} project={p.project} update={p.update}/>
       )}

@@ -6,7 +6,7 @@ export type RenderStatus = 'idle' | 'queued' | 'preparing' | 'rendering' | 'enco
 export interface QuizQuestion { id: string; question: string; options: string[]; correctAnswerIndex: number; explanation?: string; category: string; difficulty: Difficulty }
 export interface VideoScene { id: string; type: SceneType; questionId?: string; duration: number; startTime: number }
 export interface Theme { name: string; primary: string; secondary: string; background: string; card: string; accent: string }
-export interface Project { id: string; title: string; category: string; difficulty: Difficulty; timer: number; hook: string; cta: string; revealMode?: RevealMode; revealIntroText?: string; questions: QuizQuestion[]; theme: Theme; scenes: VideoScene[]; updatedAt: string }
+export interface Project { id: string; title: string; category: string; difficulty: Difficulty; timer: number; hook: string; cta: string; revealMode?: RevealMode; revealIntroText?: string; clockSfx?: string; correctSfx?: string; questions: QuizQuestion[]; theme: Theme; scenes: VideoScene[]; updatedAt: string }
 export interface RenderJob { jobId: string; status: RenderStatus; progress: number; currentStep: string; error?: string; demo?: boolean; videoId?: string }
 
 export const themes: Theme[] = [
