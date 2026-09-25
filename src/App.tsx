@@ -2,6 +2,7 @@ import {useEffect, useMemo, useRef, useState} from 'react';
 import {buildScenes, recalculateSceneTimings, duration, themes, type Project, type QuizQuestion, type RenderJob, type RevealMode, type SceneType} from './types';
 import {demoProject} from './seed';
 import {clockSfxOptions, correctSfxOptions} from './sfx';
+import logoUrl from './assets/logo/LogoTheCognitiveArchivist - baw.png';
 
 const API = '/api';
 const nav = ['Dashboard', 'Create quiz', 'Editor', 'Templates', 'My videos', 'Publishing', 'Settings'];
@@ -35,6 +36,44 @@ function createQuizText(project: Project) {
     .join('\n\n');
 }
 
+function createExternalPrompt(topic: string, category: string, count: number, timer: number, difficulty: string) {
+  const difficultyInstruction = difficulty === 'mixed' ? 'Use a mix of easy, medium, and hard.' : `Use ${difficulty} for every question.`;
+  return `Create a multiple-choice quiz for a short-form video.\n\nTopic: ${topic}\nCategory: ${category}\nNumber of questions: ${count}\nDifficulty: ${difficulty}\nAnswer timer: ${timer} seconds per question\n\nReturn valid JSON only, with no markdown fences or extra commentary, in this exact response shape:\n{\n  "questions": [\n    {\n      "question": "Question text",\n      "options": ["Option A", "Option B", "Option C", "Option D"],\n      "correctAnswerIndex": 0,\n      "explanation": "A short accurate fact explaining the answer.",\n      "category": "${category}",\n      "difficulty": "${difficulty === 'mixed' ? 'medium' : difficulty}"\n    }\n  ]\n}\n\nReturn exactly ${count} question objects. Each question must have exactly four concise answer options. correctAnswerIndex must be the zero-based index (0–3) of the correct option. Set each question's difficulty to easy, medium, or hard. ${difficultyInstruction} Keep explanations accurate and concise. Note: make the response in .json file already`;
+}
+
+function parseQuizResponse(value: unknown, fallbackCategory: string): QuizQuestion[] {
+  const rawQuestions = Array.isArray(value)
+    ? value
+    : value && typeof value === 'object' && Array.isArray((value as {questions?: unknown}).questions)
+      ? (value as {questions: unknown[]}).questions
+      : null;
+  if (!rawQuestions || rawQuestions.length < 3 || rawQuestions.length > 15) {
+    throw new Error('The JSON must contain a questions array with 3 to 15 questions.');
+  }
+
+  return rawQuestions.map((raw, index) => {
+    if (!raw || typeof raw !== 'object') throw new Error(`Question ${index + 1} must be an object.`);
+    const item = raw as Record<string, unknown>;
+    if (typeof item.question !== 'string' || !item.question.trim()) throw new Error(`Question ${index + 1} is missing its question text.`);
+    if (!Array.isArray(item.options) || item.options.length !== 4 || item.options.some(option => typeof option !== 'string' || !option.trim())) {
+      throw new Error(`Question ${index + 1} must have exactly four non-empty answer options.`);
+    }
+    if (!Number.isInteger(item.correctAnswerIndex) || (item.correctAnswerIndex as number) < 0 || (item.correctAnswerIndex as number) > 3) {
+      throw new Error(`Question ${index + 1} needs a correctAnswerIndex from 0 to 3.`);
+    }
+    const difficulty = ['easy', 'medium', 'hard', 'mixed'].includes(String(item.difficulty)) ? item.difficulty as QuizQuestion['difficulty'] : 'mixed';
+    return {
+      id: `import-${Date.now().toString(36)}-${index}-${Math.random().toString(36).slice(2, 7)}`,
+      question: item.question.trim(),
+      options: (item.options as string[]).map(option => option.trim()),
+      correctAnswerIndex: item.correctAnswerIndex as number,
+      explanation: typeof item.explanation === 'string' ? item.explanation.trim() : '',
+      category: typeof item.category === 'string' && item.category.trim() ? item.category.trim() : fallbackCategory,
+      difficulty,
+    };
+  });
+}
+
 export default function App() {
   const [project, setProject] = useState<Project>(() => { try { return JSON.parse(localStorage.getItem('quizframe-project') || '') } catch { return demoProject } });
   const [page, setPage] = useState('Editor');
@@ -46,6 +85,13 @@ export default function App() {
   const [job, setJob] = useState<RenderJob>(initialJob);
   const [notice, setNotice] = useState('');
   const [quizText, setQuizText] = useState<string | null>(null);
+  const [showPromptBuilder, setShowPromptBuilder] = useState(false);
+  const [promptTopic, setPromptTopic] = useState(project.title);
+  const [promptCategory, setPromptCategory] = useState(project.category || 'General Knowledge');
+  const [promptCount, setPromptCount] = useState(Math.max(3, Math.min(15, project.questions.length)));
+  const [promptTimer, setPromptTimer] = useState(project.timer || 5);
+  const [promptDifficulty, setPromptDifficulty] = useState(project.difficulty || 'mixed');
+  const importFileRef = useRef<HTMLInputElement>(null);
   const timer = useRef<number>();
   const previewAudio = useRef<HTMLAudioElement | null>(null);
   const lastPreviewSfx = useRef('');
@@ -190,6 +236,25 @@ export default function App() {
     }
   }
 
+  async function importQuizFile(file?: File) {
+    if (!file) return;
+    try {
+      const content = (await file.text()).replace(/^\uFEFF/, '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+      const questions = parseQuizResponse(JSON.parse(content), project.category || 'General Knowledge');
+      const scenes = buildScenes(questions, project.timer, true, project.revealMode || 'after-each-question');
+      update(old => ({...old, questions, scenes, updatedAt:new Date().toISOString()}));
+      const firstQuestionScene = scenes.find(scene => scene.type === 'question') || scenes[0];
+      setSelectedSceneId(firstQuestionScene.id);
+      setTime(firstQuestionScene.startTime);
+      setPlaying(false);
+      setNotice(`Imported ${questions.length} questions and replaced the current quiz.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? `Could not import JSON: ${error.message}` : 'Could not import this JSON file.');
+    } finally {
+      if (importFileRef.current) importFileRef.current.value = '';
+    }
+  }
+
   function editQuestion(questionId: string, key: keyof QuizQuestion, value: any) {
     const questions = project.questions.map(q => q.id === questionId ? {...q, [key]:value} : q);
     update(old => ({...old, questions, scenes:buildScenes(questions, old.timer, true, old.revealMode || 'after-each-question')}));
@@ -246,8 +311,9 @@ export default function App() {
   return <div className="app-shell">
     <aside className="sidebar"><div className="brand"><span className="brand-mark">✦</span><span>quizframe</span></div><p className="workspace">WORKSPACE</p>{nav.map(item => <button key={item} className={`nav-item ${page===item?'active':''}`} onClick={()=>setPage(item)}><span>{icon(item)}</span>{item}</button>)}<div className="sidebar-bottom"><div className="upgrade"><b>✦ Creator plan</b><small>Unlimited local projects</small><button>Manage plan</button></div><div className="profile"><div className="avatar">AM</div><span><b>Alex Morgan</b><small>Creator workspace</small></span><span>⌄</span></div></div></aside>
     <main>
-      <header><div><span className="crumb">PROJECTS / </span><b>{project.title}</b><span className="saved">● Saved locally</span></div><div className="header-actions"><button className="ghost" onClick={()=>setPage('Publishing')}>↗ Publish</button><button className="ghost" onClick={()=>setQuizText(createQuizText(project))}>Generate text</button><button className="primary" onClick={render}>✦ Render video</button></div></header>
+      <header><div><span className="crumb">PROJECTS / </span><b>{project.title}</b><span className="saved">● Saved locally</span></div><div className="header-actions">{page === 'Editor' && <><button className="ghost" onClick={()=>{setPromptTopic(project.title);setPromptCategory(project.category || 'General Knowledge');setPromptCount(Math.max(3,Math.min(15,project.questions.length)));setPromptTimer(project.timer);setPromptDifficulty(project.difficulty || 'mixed');setShowPromptBuilder(true);}}>Create AI prompt</button><button className="ghost" onClick={()=>importFileRef.current?.click()}>Import AI JSON</button><input ref={importFileRef} className="file-input-hidden" type="file" accept=".json,application/json" onChange={event=>void importQuizFile(event.target.files?.[0])}/></>}<button className="ghost" onClick={()=>setPage('Publishing')}>↗ Publish</button><button className="ghost" onClick={()=>setQuizText(createQuizText(project))}>Generate text</button><button className="primary" onClick={render}>✦ Render video</button></div></header>
       {notice && <div className="notice">{notice}<button onClick={()=>setNotice('')}>×</button></div>}
+      {showPromptBuilder && <div className="text-overlay" role="presentation" onMouseDown={event=>{if(event.target===event.currentTarget)setShowPromptBuilder(false);}}><section className="text-modal prompt-modal" role="dialog" aria-modal="true" aria-labelledby="ai-prompt-title"><button className="text-close" aria-label="Close" onClick={()=>setShowPromptBuilder(false)}>×</button><h2 id="ai-prompt-title">Create an AI quiz prompt</h2><p>Copy this request into ChatGPT or another AI chat, then save its JSON response and import it here.</p><div className="prompt-fields"><label>TOPIC<input value={promptTopic} onChange={event=>setPromptTopic(event.target.value)} placeholder="e.g. Space exploration"/></label><label>CATEGORY<input value={promptCategory} onChange={event=>setPromptCategory(event.target.value)} placeholder="e.g. Science"/></label><label>QUESTIONS<input type="number" min="3" max="15" value={promptCount} onChange={event=>setPromptCount(Math.max(3,Math.min(15,Number(event.target.value)||3)))}/></label><label>TIMER (SECONDS)<input type="number" min="2" max="15" value={promptTimer} onChange={event=>setPromptTimer(Math.max(2,Math.min(15,Number(event.target.value)||2)))}/></label><label>DIFFICULTY<select value={promptDifficulty} onChange={event=>setPromptDifficulty(event.target.value as Project['difficulty'])}>{['mixed','easy','medium','hard'].map(value=><option key={value} value={value}>{value[0].toUpperCase()+value.slice(1)}</option>)}</select></label></div><textarea aria-label="Generated AI request" readOnly value={createExternalPrompt(promptTopic,promptCategory,promptCount,promptTimer,promptDifficulty)}/><div className="text-actions"><button className="ghost" onClick={()=>setShowPromptBuilder(false)}>Close</button><button className="primary" onClick={async()=>{try{await navigator.clipboard.writeText(createExternalPrompt(promptTopic,promptCategory,promptCount,promptTimer,promptDifficulty));setShowPromptBuilder(false);setNotice('AI request copied to clipboard.');}catch{setNotice('Could not copy automatically. Select the request and copy it manually.');}}}>Copy request</button></div></section></div>}
       {quizText !== null && <div className="text-overlay" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setQuizText(null); }}><section className="text-modal" role="dialog" aria-modal="true" aria-labelledby="quiz-text-title"><button className="text-close" aria-label="Close" onClick={()=>setQuizText(null)}>×</button><h2 id="quiz-text-title">Quiz text</h2><p>Questions, answer choices, correct answers, and facts in timeline order.</p><textarea aria-label="Generated quiz text" readOnly value={quizText} placeholder="No questions, answers, or facts are available in the timeline."/><div className="text-actions"><button className="ghost" onClick={()=>setQuizText(null)}>Close</button><button className="primary" disabled={!quizText} onClick={copyQuizText}>Copy text</button></div></section></div>}
       {page === 'Editor' && <Editor project={project} total={total} activeScene={activeScene} activeQuestion={activeQuestion} selectedSceneId={selectedSceneId} selectScene={selectScene} selectQuestion={selectQuestion} addQuestion={addQuestion} deleteQuestion={deleteQuestion} playing={playing} setPlaying={setPlaying} time={time} setTime={setTime} sound={sound} setSound={setSound} showGuides={showGuides} setShowGuides={setShowGuides} update={update} editQuestion={editQuestion} updateSceneDuration={updateSceneDuration} applyDurationToAll={applyDurationToAll} setRevealMode={setRevealMode} job={job} render={render}/>} 
       {page === 'Dashboard' && <Dashboard project={project} total={total} onEdit={()=>setPage('Editor')} onCreate={()=>setPage('Create quiz')}/>} 
@@ -429,6 +495,7 @@ function PhonePreview({project, scene, question, time, guides}:{project:Project;
         {guides && <><div className="safe safe-top">SAFE AREA</div><div className="safe safe-bottom">SAFE AREA</div></>}
         {scene.type === 'hook' && (
           <div className="hook-screen">
+            <img className="scene-logo" src={logoUrl} alt="The Cognitive Archivist" />
             <span>QUIZ TIME</span>
             <h1>{project.hook}</h1>
             <b>Ready? Let’s go.</b>
@@ -443,7 +510,7 @@ function PhonePreview({project, scene, question, time, guides}:{project:Project;
         )}
         {(questionScene || reveal) && question && (
           <div className="question-screen">
-            <div className="mini-brand">✦ quizframe <span>@quizmaster</span></div>
+            <div className="mini-brand">✦ quizframe <span>@TheCognitiveArchivist</span></div>
             <div className="counter">QUESTION {project.questions.findIndex(q => q.id === question.id) + 1} <i>/</i> {project.questions.length}</div>
             <h1 style={{fontSize: fit(question.question, 37)}}>{question.question}</h1>
             <div className={`countdown ${remaining <= 2 ? 'urgent' : ''}`}>
@@ -479,10 +546,11 @@ function PhonePreview({project, scene, question, time, guides}:{project:Project;
         )}
         {scene.type === 'cta' && (
           <div className="cta-screen">
+            <img className="scene-logo" src={logoUrl} alt="The Cognitive Archivist" />
             <span>✦ YOU MADE IT!</span>
             <h1>{project.cta}</h1>
             <button>FOLLOW FOR MORE</button>
-            <small>@quizmaster</small>
+            <small>@TheCognitiveArchivist</small>
           </div>
         )}
       </div>
@@ -708,7 +776,7 @@ function RenderPanel({job,render}:{job:RenderJob;render:()=>void}) {
 function Dashboard({project,total,onEdit,onCreate}:{project:Project;total:number;onEdit:()=>void;onCreate:()=>void}) { return <div className="page dashboard"><div className="welcome"><div><p>MONDAY, SEPTEMBER 18</p><h1>Make something<br/><em>worth watching.</em></h1><span>Turn an idea into a polished short-form quiz in minutes.</span><div><button className="primary" onClick={onCreate}>✦ Create a quiz</button><button className="ghost" onClick={onEdit}>Open editor</button></div></div><div className="hero-art"><span>?</span><i>✓</i><b>5</b></div></div><div className="stat-grid"><Stat label="VIDEOS CREATED" value="12" meta="↗ 3 this week"/><Stat label="TOTAL PLAYS" value="48.2K" meta="↗ 18.4% this month"/><Stat label="AVERAGE COMPLETION" value="72%" meta="↗ 4.8% vs last month"/></div><div className="section-heading"><div><span>RECENT PROJECTS</span><h2>Pick up where you left off</h2></div><button className="text-button" onClick={onEdit}>View all →</button></div><div className="project-card"><div className="project-art">QUIZ<br/><b>TIME</b></div><div><b>{project.title}</b><small>Updated just now · {total.toFixed(1)} seconds</small><div className="tags"><span>{project.theme.name}</span><span>{project.questions.length} questions</span><span>9:16</span></div></div><button className="ghost" onClick={onEdit}>Open project →</button></div></div> }
 function Stat({label,value,meta}:{label:string;value:string;meta:string}) { return <div className="stat"><span>{label}</span><b>{value}</b><small>{meta}</small></div> }
 function CreateQuiz({onGenerate}:{onGenerate:(input:{topic:string;category:string;count:number;timer:number})=>void}) { const [topic,setTopic]=useState('Can you get 5/5 on these science questions?'); const [category,setCategory]=useState('Science'); const [count,setCount]=useState(5); const [timer,setTimer]=useState(5); const estimate=2+count*(timer+3.5)+4.5; return <div className="page create"><div className="page-intro"><span>NEW PROJECT</span><h1>Build a quiz they<br/>can’t <em>scroll past.</em></h1><p>Start with a topic. We’ll craft the questions, timing, and edit-ready video structure.</p></div><div className="create-grid"><section className="form-card"><label>QUIZ TITLE OR TOPIC<input value={topic} onChange={e=>setTopic(e.target.value)} placeholder="e.g. Can you get 5/5?"/></label><div className="form-row"><label>CATEGORY<select value={category} onChange={e=>setCategory(e.target.value)}>{['General Knowledge','Science','Geography','History','Technology','Animals','Space','Food'].map(x=><option key={x}>{x}</option>)}</select></label><label>DIFFICULTY<select><option>Mixed</option><option>Easy</option><option>Medium</option><option>Hard</option></select></label></div><label>NUMBER OF QUESTIONS<div className="segmented">{[3,5,10,15].map(n=><button onClick={()=>setCount(n)} className={count===n?'on':''} key={n}>{n}</button>)}</div></label><label>TIMER PER QUESTION<div className="segmented">{[3,5,7,10].map(n=><button onClick={()=>setTimer(n)} className={timer===n?'on':''} key={n}>{n}s</button>)}</div></label><label>VIDEO STYLE<div className="template-picks">{themes.map(t=><div key={t.name} className="template-mini" style={{background:t.background,borderColor:t.primary}}><span style={{color:t.primary}}>✦</span><b>{t.name}</b></div>)}</div></label><button className="primary wide" onClick={()=>onGenerate({topic,category,count,timer})}>✦ Generate quiz</button><small className="demo-note">Demo mode uses the built-in local quiz generator. No API key required.</small></section><aside className="estimate"><span>YOUR VIDEO PLAN</span><div className="estimate-chart"><b>{estimate.toFixed(0)}<small>sec</small></b><i/></div><div><span>Hook</span><b>2 sec</b></div><div><span>{count} questions + timer</span><b>{count*timer} sec</b></div><div><span>Reveals & explanations</span><b>{(count*3.5).toFixed(1)} sec</b></div><hr/><div><strong>ESTIMATED TOTAL</strong><strong>{estimate.toFixed(1)} sec</strong></div><p>Comfortably suited to a 45-second vertical short.</p></aside></div></div> }
-function Templates({project,update}:{project:Project;update:any}) { return <div className="page templates"><div className="page-intro"><span>VISUAL SYSTEM</span><h1>Make it unmistakably<br/><em>yours.</em></h1><p>Templates are lightweight visual settings saved inside this browser.</p></div><div className="template-grid">{themes.map(theme=><button className={`theme-card ${project.theme.name===theme.name?'chosen':''}`} key={theme.name} onClick={()=>update((p:Project)=>({...p,theme}))}><div className="theme-preview" style={{background:theme.background}}><b style={{color:theme.primary}}>QUESTION</b><span style={{background:theme.card,borderColor:theme.accent}}>A&nbsp;&nbsp; Answer option</span><i style={{background:theme.secondary}}>05</i></div><div><strong>{theme.name}</strong><small>{theme.name==='Game show'?'Dramatic and energetic':theme.name==='Neon trivia'?'Electric, high contrast':'Bold and fast-paced'}</small></div>{project.theme.name===theme.name&&<em>✓ Active</em>}</button>)}</div><div className="brand-card"><div><span>BRANDING</span><h2>Make each video recognizably yours</h2><p>Your handle is applied subtly in the phone preview, staying clear of platform controls.</p></div><label>USERNAME<input defaultValue="@quizmaster"/></label><label>PRIMARY COLOUR<input type="color" value={project.theme.primary} onChange={e=>update((p:Project)=>({...p,theme:{...p.theme,primary:e.target.value}}))}/></label></div></div> }
+function Templates({project,update}:{project:Project;update:any}) { return <div className="page templates"><div className="page-intro"><span>VISUAL SYSTEM</span><h1>Make it unmistakably<br/><em>yours.</em></h1><p>Templates are lightweight visual settings saved inside this browser.</p></div><div className="template-grid">{themes.map(theme=><button className={`theme-card ${project.theme.name===theme.name?'chosen':''}`} key={theme.name} onClick={()=>update((p:Project)=>({...p,theme}))}><div className="theme-preview" style={{background:theme.background}}><b style={{color:theme.primary}}>QUESTION</b><span style={{background:theme.card,borderColor:theme.accent}}>A&nbsp;&nbsp; Answer option</span><i style={{background:theme.secondary}}>05</i></div><div><strong>{theme.name}</strong><small>{theme.name==='Game show'?'Dramatic and energetic':theme.name==='Neon trivia'?'Electric, high contrast':'Bold and fast-paced'}</small></div>{project.theme.name===theme.name&&<em>✓ Active</em>}</button>)}</div><div className="brand-card"><div><span>BRANDING</span><h2>Make each video recognizably yours</h2><p>Your handle is applied subtly in the phone preview, staying clear of platform controls.</p></div><label>USERNAME<input defaultValue="@TheCognitiveArchivist"/></label><label>PRIMARY COLOUR<input type="color" value={project.theme.primary} onChange={e=>update((p:Project)=>({...p,theme:{...p.theme,primary:e.target.value}}))}/></label></div></div> }
 function Publishing({project}:{project:Project}) { return <div className="page publishing"><div className="page-intro"><span>DISTRIBUTION</span><h1>Publish with clarity,<br/><em>not guesswork.</em></h1><p>Platform connections are intentionally isolated from the editor. No credentials are stored in your browser.</p></div><div className="publish-layout"><section className="metadata"><span>POST DETAILS</span><label>TITLE<input defaultValue={`${project.title} ✦`}/></label><label>DESCRIPTION<textarea defaultValue={'Think you can get every answer?\n\nTake the quiz and comment your score!'}/></label><label>HASHTAGS<input defaultValue="#quiz #trivia #generalknowledge #shorts"/></label><button className="primary wide">Queue demo publish</button><small>Demo publish only simulates a queue entry; it never uploads content.</small></section><section className="connections"><span>PLATFORM CONNECTIONS</span><Platform name="YouTube Shorts" state="Not connected" detail="OAuth connection required to publish."/><Platform name="Instagram Reels" state="Requires approval" detail="Publishing access depends on your Meta app permissions."/><Platform name="TikTok" state="Not connected" detail="OAuth connection required to publish."/><div className="publish-info">ⓘ Connect real accounts from Settings after you configure a verified integration.</div></section></div></div> }
 function Platform({name,state,detail}:{name:string;state:string;detail:string}) { return <div className="platform"><div className="platform-logo">▶</div><div><b>{name}</b><small>{detail}</small></div><span>{state}</span><button className="ghost">Connect</button></div> }
 function Settings() { return <div className="page settings"><div className="page-intro"><span>INTEGRATIONS</span><h1>Keep secrets on the<br/><em>server side.</em></h1><p>Set credentials in the local <code>.env</code> file. The interface reports status but never displays secret values.</p></div><div className="integration-grid"><Integration icon="✦" name="Quiz generation" status="Demo provider active" detail="Set AI_PROVIDER and AI_API_KEY to enable a supported server-side provider."/><Integration icon="♬" name="Voiceover" status="Demo provider active" detail="Set TTS_PROVIDER and TTS_API_KEY to generate server-side audio clips."/><Integration icon="▶" name="YouTube" status="Not connected" detail="Requires OAuth client ID and secret on the backend."/><Integration icon="◎" name="Instagram" status="Not configured" detail="Requires approved Meta publishing permissions."/></div><div className="security-note"><b>Security by design</b><span>Secrets are server-only · mock services are labeled · OAuth belongs to the backend · no permanent tokens in localStorage</span></div></div> }

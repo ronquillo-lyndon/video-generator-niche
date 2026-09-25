@@ -23,6 +23,8 @@ const correctSfxFiles: Record<string, string> = {
   'correct_sfx3.mp3': join(process.cwd(), 'src', 'assets', 'sfx', 'correct sfxs', 'correct_sfx3.mp3'),
   'correct_sfx4.mp3': join(process.cwd(), 'src', 'assets', 'sfx', 'correct sfxs', 'correct_sfx4.mp3'),
 };
+const logoPath = join(process.cwd(), 'src', 'assets', 'logo', 'LogoTheCognitiveArchivist - standard');
+const logoData = existsSync(logoPath) ? readFileSync(logoPath).toString('base64') : '';
 app.use(cors({origin: ['http://localhost:5173'], methods:['GET','POST','PUT']}));
 app.use(express.json({limit:'500kb'}));
 
@@ -155,7 +157,8 @@ function generateSceneSvg(scene: any, project: any, frameContext?: { remaining?:
     card: project.theme?.card || '#1b2758',
     accent: project.theme?.accent || '#60e8ff',
   };
-  const handle = '@quizmaster';
+  const handle = '@TheCognitiveArchivist';
+  const logo = logoData ? `<image href="data:image/png;base64,${logoData}" x="340" y="45" width="400" height="220" preserveAspectRatio="xMidYMid meet"/>` : '';
   const question = project.questions.find((item: any) => item.id === scene.questionId);
   const qIndex = question ? project.questions.findIndex((item: any) => item.id === question.id) : 0;
   const totalQs = project.questions.length || 5;
@@ -196,6 +199,7 @@ function generateSceneSvg(scene: any, project: any, frameContext?: { remaining?:
         ${defs}
         <rect width="1080" height="1920" fill="url(#hookGrad)"/>
         <rect width="1080" height="1920" fill="url(#dotGrid)"/>
+        ${logo}
         <text x="80" y="110" fill="${theme.primary}" font-family="Arial, sans-serif" font-weight="bold" font-size="34">✦ quizframe</text>
         <text x="1000" y="110" text-anchor="end" fill="#e3e3e7" font-family="Arial, sans-serif" font-weight="600" font-size="32">${handle}</text>
         
@@ -391,6 +395,7 @@ function generateSceneSvg(scene: any, project: any, frameContext?: { remaining?:
         ${defs}
         <rect width="1080" height="1920" fill="url(#ctaGrad)"/>
         <rect width="1080" height="1920" fill="url(#dotGrid)"/>
+        ${logo}
         <text x="80" y="110" fill="${theme.primary}" font-family="Arial, sans-serif" font-weight="bold" font-size="34">✦ quizframe</text>
         <text x="1000" y="110" text-anchor="end" fill="#e3e3e7" font-family="Arial, sans-serif" font-weight="600" font-size="32">${handle}</text>
 
